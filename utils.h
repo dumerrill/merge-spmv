@@ -424,13 +424,17 @@ T RandomValue(T max)
     return (T) ((double(bits) / double(max_int)) * double(max));
 }
 
+
 //---------------------------------------------------------------------
 // Performance evaluation
 //---------------------------------------------------------------------
 
+
+#ifdef CUB_MKL
+
 /**
  * CPU timer
- * /
+ */
 struct CpuTimer
 {
     double start;
@@ -452,64 +456,9 @@ struct CpuTimer
     }
 
 };
-*/
-
-struct CpuTimer
-{
-#if defined(_WIN32) || defined(_WIN64)
-
-    LARGE_INTEGER ll_freq;
-    LARGE_INTEGER ll_start;
-    LARGE_INTEGER ll_stop;
-
-    CpuTimer()
-    {
-        QueryPerformanceFrequency(&ll_freq);
-    }
-
-    void Start()
-    {
-        QueryPerformanceCounter(&ll_start);
-    }
-
-    void Stop()
-    {
-        QueryPerformanceCounter(&ll_stop);
-    }
-
-    float ElapsedMillis()
-    {
-        double start = double(ll_start.QuadPart) / double(ll_freq.QuadPart);
-        double stop  = double(ll_stop.QuadPart) / double(ll_freq.QuadPart);
-
-        return float((stop - start) * 1000);
-    }
-
-#else
-
-    rusage start;
-    rusage stop;
-
-    void Start()
-    {
-        getrusage(RUSAGE_SELF, &start);
-    }
-
-    void Stop()
-    {
-        getrusage(RUSAGE_SELF, &stop);
-    }
-
-    float ElapsedMillis()
-    {
-        float sec = stop.ru_utime.tv_sec - start.ru_utime.tv_sec;
-        float usec = stop.ru_utime.tv_usec - start.ru_utime.tv_usec;
-
-        return (sec * 1000) + (usec / 1000);
-    }
 
 #endif
-};
+
 
 
 //---------------------------------------------------------------------
@@ -546,14 +495,14 @@ int CompareResults(float* computed, float* reference, OffsetT len, bool verbose 
  
     for (OffsetT i = 0; i < len; i++)
     {
-        float difference = std::abs(computed[i]-reference[i]);
-        float allow = sqrt(len) * (meps + std::abs(reference[i]));
-        
-        if (difference > allow)
-        {
-            printf("%f < %f\n", allow, difference);
+        float   a           = computed[i];
+        float   b           = reference[i];
+        int     int_diff    = std::abs(*(int*)&a - *(int*)&b);
+        float   sqrt_diff   = sqrt(float(int_diff));
 
-            if (verbose) std::cout << "INCORRECT: [" << i << "]: "
+        if (sqrt_diff > len)      
+        {
+            if (verbose) std::cout << "INCORRECT (sqrt_diff: " << sqrt_diff << "): [" << i << "]: "
                  << computed[i] << " != "
                  << reference[i]; 
             return 1;
@@ -563,6 +512,7 @@ int CompareResults(float* computed, float* reference, OffsetT len, bool verbose 
 }
 
 
+
 /**
  * Compares the equivalence of two arrays
  */
@@ -570,22 +520,24 @@ template <typename OffsetT>
 int CompareResults(double* computed, double* reference, OffsetT len, bool verbose = true)
 {
     double meps = std::numeric_limits<double>::epsilon();
+    float fmeps = std::numeric_limits<float>::epsilon();
  
     for (OffsetT i = 0; i < len; i++)
     {
-        double difference = std::abs(computed[i]-reference[i]);
-        double allow = sqrt(len) * (meps + std::abs(reference[i]));
-        
-        if (difference > allow)
-        {
-            printf("%f < %f\n", allow, difference);
+        float   a           = computed[i];
+        float   b           = reference[i];
+        int     int_diff    = std::abs(*(int*)&a - *(int*)&b);
+        float   sqrt_diff   = sqrt(float(int_diff));
 
-            if (verbose) std::cout << "INCORRECT: [" << i << "]: "
+        if (sqrt_diff > len)      
+        {
+            if (verbose) std::cout << "INCORRECT (sqrt_diff: " << sqrt_diff << "): [" << i << "]: "
                  << computed[i] << " != "
                  << reference[i]; 
             return 1;
         }
     }
     return 0;
+
 }
 

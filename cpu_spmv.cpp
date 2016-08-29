@@ -454,13 +454,6 @@ float TestMklCsrmv(
     ValueT*                         vector_y_out,
     int                             timing_iterations)
 {
-    if (g_omp_threads == -1)
-        g_omp_threads = omp_get_num_procs();
-    int num_threads = g_omp_threads;
-
-    if (!g_quiet)
-        printf("\tUsing %d threads on %d procs\n", g_omp_threads, omp_get_num_procs());
-
     // Warmup/correctness
     memset(vector_y_out, -1, sizeof(ValueT) * a.num_rows);
     MklCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
@@ -531,7 +524,6 @@ template <
     typename ValueT,
     typename OffsetT>
 void RunTests(
-    bool                rcm_relabel,
     ValueT              alpha,
     ValueT              beta,
     const std::string&  mtx_filename,
@@ -590,26 +582,6 @@ void RunTests(
 
     CsrMatrix<ValueT, OffsetT> csr_matrix(coo_matrix);
     coo_matrix.Clear();
-
-    // Relabel
-    if (rcm_relabel)
-    {
-        if (!g_quiet)
-        {
-            csr_matrix.Stats().Display();
-            printf("\n");
-            csr_matrix.DisplayHistogram();
-            printf("\n");
-            if (g_verbose2)
-                csr_matrix.Display();
-            printf("\n");
-        }
-
-        RcmRelabel(csr_matrix, !g_quiet);
-
-        if (!g_quiet)
-        printf("\n");
-    }
 
     // Display matrix info
     csr_matrix.Stats().Display(!g_quiet);
@@ -698,7 +670,6 @@ int main(int argc, char **argv)
             "[--threads=<OMP threads>] "
             "[--i=<timing iterations>] "
             "[--fp64 (default) | --fp32] "
-            "[--rcm] "
             "[--alpha=<alpha scalar (default: 1.0)>] "
             "[--beta=<beta scalar (default: 0.0)>] "
             "\n\t"
@@ -716,7 +687,6 @@ int main(int argc, char **argv)
     }
 
     bool                fp32;
-    bool                rcm_relabel;
     std::string         mtx_filename;
     int                 grid2d              = -1;
     int                 grid3d              = -1;
@@ -730,7 +700,6 @@ int main(int argc, char **argv)
     g_verbose2 = args.CheckCmdLineFlag("v2");
     g_quiet = args.CheckCmdLineFlag("quiet");
     fp32 = args.CheckCmdLineFlag("fp32");
-    rcm_relabel = args.CheckCmdLineFlag("rcm");
     args.GetCmdLineArgument("i", timing_iterations);
     args.GetCmdLineArgument("mtx", mtx_filename);
     args.GetCmdLineArgument("grid2d", grid2d);
@@ -743,11 +712,11 @@ int main(int argc, char **argv)
     // Run test(s)
     if (fp32)
     {
-        RunTests<float, int>(rcm_relabel, alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
+        RunTests<float, int>(alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
     }
     else
     {
-        RunTests<double, int>(rcm_relabel, alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
+        RunTests<double, int>(alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
     }
 
     printf("\n");

@@ -65,8 +65,8 @@ endif
 #-------------------------------------------------------------------------------
 
 # OMP compiler
-OMPCC=icc
-OMPCC_FLAGS=-openmp -O3 -lrt -fno-alias -xHost -lnuma -O3
+OMPCC=icpc
+OMPCC_FLAGS=-openmp -O3 -lrt -fno-alias -xHost -lnuma -O3 -mkl
 
 # Includes
 INC += -I$(CUB_DIR) -I$(CUB_DIR)test 
@@ -87,12 +87,14 @@ EXP_DEPS = 	$(call rwildcard, ./,*.cuh) \
 DEPS =				$(CUB_DEPS) \
 					$(EXP_DEPS) \
 
+
+clean :
+	rm -f gpu_spmv cpu_spmv
+
 		
 #-------------------------------------------------------------------------------
 # make gpu_spmv
 #-------------------------------------------------------------------------------
-
-gpu_spmv: gpu_spmv
 
 gpu_spmv : gpu_spmv.cu $(DEPS)
 	$(NVCC) $(DEFINES) $(SM_TARGETS) -o gpu_spmv gpu_spmv.cu $(NVCCFLAGS) $(CPU_ARCH) $(INC) $(LIBS) -lcusparse -O3
@@ -101,8 +103,6 @@ gpu_spmv : gpu_spmv.cu $(DEPS)
 #-------------------------------------------------------------------------------
 # make cpu_spmv
 #-------------------------------------------------------------------------------
-
-cpu_spmv: cpu_spmv
 
 cpu_spmv : cpu_spmv.cpp $(DEPS)
 	$(OMPCC) $(DEFINES) -o cpu_spmv cpu_spmv.cpp $(OMPCC_FLAGS)
