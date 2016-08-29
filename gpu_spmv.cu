@@ -92,149 +92,6 @@ void SpmvGold(
 }
 
 
-//---------------------------------------------------------------------
-// GPU I/O proxy
-//---------------------------------------------------------------------
-
-/**
- * Read every matrix nonzero value, read every corresponding vector value
- */
-template <
-    int         BLOCK_THREADS,
-    int         ITEMS_PER_THREAD,
-    typename    ValueT,
-    typename    OffsetT,
-    typename    VectorItr>
-__launch_bounds__ (int(BLOCK_THREADS))
-__global__ void NonZeroIoKernel(
-    SpmvParams<ValueT, OffsetT> params,
-    VectorItr                   d_vector_x)
-{
-    enum
-    {
-        TILE_ITEMS      = BLOCK_THREADS * ITEMS_PER_THREAD,
-    };
-
-
-    ValueT nonzero = 0.0;
-
-    int tile_idx = blockIdx.x;
-
-    OffsetT block_offset = tile_idx * TILE_ITEMS;
-
-    OffsetT column_indices[ITEMS_PER_THREAD];
-    ValueT values[ITEMS_PER_THREAD];
-
-    #pragma unroll
-    for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
-    {
-        OffsetT nonzero_idx = block_offset + (ITEM * BLOCK_THREADS) + threadIdx.x;
-
-        OffsetT* ci = params.d_column_indices + nonzero_idx;
-        ValueT*a = params.d_values + nonzero_idx;
-
-        column_indices[ITEM]    = (nonzero_idx < params.num_nonzeros) ? *ci : 0;
-        values[ITEM]            = (nonzero_idx < params.num_nonzeros) ? *a : 0.0;
-    }
-
-    __syncthreads();
-
-    // Read vector
-    #pragma unroll
-    for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
-    {
-        ValueT vector_value    = ThreadLoad<LOAD_LDG>(params.d_vector_x + column_indices[ITEM]);
-        nonzero                += vector_value * values[ITEM];
-    }
-
-    __syncthreads();
-
-    if (block_offset < params.num_rows)
-    {
-        #pragma unroll
-        for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
-        {
-            OffsetT row_idx = block_offset + (ITEM * BLOCK_THREADS) + threadIdx.x;
-            if (row_idx < params.num_rows)
-            {
-                OffsetT row_end_offset = ThreadLoad<LOAD_DEFAULT>(params.d_row_end_offsets + row_idx);
-
-                if ((row_end_offset >= 0) && (nonzero == nonzero))
-                    params.d_vector_y[row_idx] = nonzero;
-            }
-        }
-    }
-
-}
-
-
-/**
- * Run GPU I/O proxy
- */
-template <
-    typename ValueT,
-    typename OffsetT>
-float TestGpuCsrIoProxy(
-    SpmvParams<ValueT, OffsetT>&    params,
-    int                             timing_iterations)
-{
-    enum {
-        BLOCK_THREADS       = 128,
-        ITEMS_PER_THREAD    = 7,
-        TILE_SIZE           = BLOCK_THREADS * ITEMS_PER_THREAD,
-    };
-
-//    size_t smem = 1024 * 16;
-    size_t smem = 1024 * 0;
-
-    unsigned int nonzero_blocks = (params.num_nonzeros + TILE_SIZE - 1) / TILE_SIZE;
-    unsigned int row_blocks = (params.num_rows + TILE_SIZE - 1) / TILE_SIZE;
-    unsigned int blocks = std::max(nonzero_blocks, row_blocks);
-
-    typedef TexRefInputIterator<ValueT, 1234, int> TexItr;
-    TexItr x_itr;
-    CubDebugExit(x_itr.BindTexture(params.d_vector_x));
-
-    // Get device ordinal
-    int device_ordinal;
-    CubDebugExit(cudaGetDevice(&device_ordinal));
-
-    // Get device SM version
-    int sm_version;
-    CubDebugExit(SmVersion(sm_version, device_ordinal));
-
-    void (*kernel)(SpmvParams<ValueT, OffsetT>, TexItr) = NonZeroIoKernel<BLOCK_THREADS, ITEMS_PER_THREAD>;
-
-
-    int spmv_sm_occupancy;
-    CubDebugExit(MaxSmOccupancy(spmv_sm_occupancy, kernel, BLOCK_THREADS, smem));
-
-    if (!g_quiet)
-        printf("NonZeroIoKernel<%d,%d><<<%d, %d>>>, sm occupancy %d\n", BLOCK_THREADS, ITEMS_PER_THREAD, blocks, BLOCK_THREADS, spmv_sm_occupancy);
-
-    // Warmup
-    NonZeroIoKernel<BLOCK_THREADS, ITEMS_PER_THREAD><<<blocks, BLOCK_THREADS, smem>>>(params, x_itr);
-
-    // Check for failures
-    CubDebugExit(cudaPeekAtLastError());
-    CubDebugExit(SyncStream(0));
-
-    // Timing
-    GpuTimer timer;
-    float elapsed_millis = 0.0;
-    timer.Start();
-    for (int it = 0; it < timing_iterations; ++it)
-    {
-        NonZeroIoKernel<BLOCK_THREADS, ITEMS_PER_THREAD><<<blocks, BLOCK_THREADS, smem>>>(params, x_itr);
-    }
-    timer.Stop();
-    elapsed_millis += timer.ElapsedMillis();
-
-    CubDebugExit(x_itr.UnbindTexture());
-
-    return elapsed_millis / timing_iterations;
-}
-
 
 
 //---------------------------------------------------------------------
@@ -528,7 +385,6 @@ float TestGpuMergeCsrmv(
         params.d_values, params.d_row_end_offsets, params.d_column_indices,
         params.d_vector_x, params.d_vector_y,
         params.num_rows, params.num_cols, params.num_nonzeros,
-// params.alpha, params.beta,
         (cudaStream_t) 0, false));
 
     // Allocate
@@ -543,7 +399,6 @@ float TestGpuMergeCsrmv(
         params.d_values, params.d_row_end_offsets, params.d_column_indices,
         params.d_vector_x, params.d_vector_y,
         params.num_rows, params.num_cols, params.num_nonzeros, 
-// params.alpha, params.beta,
         (cudaStream_t) 0, !g_quiet));
 
     if (!g_quiet)
@@ -564,7 +419,6 @@ float TestGpuMergeCsrmv(
             params.d_values, params.d_row_end_offsets, params.d_column_indices,
             params.d_vector_x, params.d_vector_y,
             params.num_rows, params.num_cols, params.num_nonzeros, 
-// params.alpha, params.beta,
             (cudaStream_t) 0, false));
     }
     timer.Stop();
@@ -619,7 +473,6 @@ template <
     typename ValueT,
     typename OffsetT>
 void RunTest(
-    bool                        rcm_relabel,
     ValueT                      alpha,
     ValueT                      beta,
     CooMatrix<ValueT, OffsetT>& coo_matrix,
@@ -634,29 +487,9 @@ void RunTest(
         printf("\t%d timing iterations\n", timing_iterations);
 
     // Convert to CSR
-    CsrMatrix<ValueT, OffsetT> csr_matrix;
-    csr_matrix.FromCoo(coo_matrix);
+    CsrMatrix<ValueT, OffsetT> csr_matrix(coo_matrix);
     if (!args.CheckCmdLineFlag("csrmv"))
         coo_matrix.Clear();
-
-    // Relabel
-    if (rcm_relabel)
-    {
-        if (!g_quiet)
-        {
-            csr_matrix.Stats().Display();
-            printf("\n");
-            csr_matrix.DisplayHistogram();
-            printf("\n");
-            if (g_verbose2)
-                csr_matrix.Display();
-            printf("\n");
-        }
-
-        RcmRelabel(csr_matrix, !g_quiet);
-
-        if (!g_quiet) printf("\n");
-    }
 
     // Display matrix info
     csr_matrix.Stats().Display(!g_quiet);
@@ -713,39 +546,27 @@ void RunTest(
     CubDebugExit(cudaMemcpy(params.d_column_indices,    csr_matrix.column_indices,  sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
     CubDebugExit(cudaMemcpy(params.d_vector_x,          vector_x,                   sizeof(ValueT) * csr_matrix.num_cols, cudaMemcpyHostToDevice));
 
+	// Merge-based
     if (!g_quiet) printf("\n\n");
-    printf("GPU CSR I/O Prox, "); fflush(stdout);
-    avg_millis = TestGpuCsrIoProxy(params, timing_iterations);
+    printf("CUB, "); fflush(stdout);
+    avg_millis = TestGpuMergeCsrmv(vector_y_in, vector_y_out, params, timing_iterations);
     DisplayPerf(device_giga_bandwidth, avg_millis, csr_matrix);
-
-    if (args.CheckCmdLineFlag("csrmv"))
-    {
-        if (!g_quiet) printf("\n\n");
-        printf("CUB, "); fflush(stdout);
-        avg_millis = TestGpuMergeCsrmv(vector_y_in, vector_y_out, params, timing_iterations);
-        DisplayPerf(device_giga_bandwidth, avg_millis, csr_matrix);
-    }
 
     // Initialize cuSparse
     cusparseHandle_t cusparse;
     AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreate(&cusparse));
 
-    if (args.CheckCmdLineFlag("csrmv"))
-    {
-        if (!g_quiet) printf("\n\n");
-        printf("Cusparse CsrMV, "); fflush(stdout);
-        avg_millis = TestCusparseCsrmv(vector_y_in, vector_y_out, params, timing_iterations, cusparse);
-        DisplayPerf(device_giga_bandwidth, avg_millis, csr_matrix);
-    }
+	// cuSPARSE CsrMV
+    if (!g_quiet) printf("\n\n");
+    printf("Cusparse CsrMV, "); fflush(stdout);
+    avg_millis = TestCusparseCsrmv(vector_y_in, vector_y_out, params, timing_iterations, cusparse);
+    DisplayPerf(device_giga_bandwidth, avg_millis, csr_matrix);
 
-    if (args.CheckCmdLineFlag("hybmv"))
-    {
-        if (!g_quiet) printf("\n\n");
-        printf("Cusparse HybMV, "); fflush(stdout);
-
-        avg_millis = TestCusparseHybmv(vector_y_in, vector_y_out, params, timing_iterations, cusparse);
-        DisplayPerf(device_giga_bandwidth, avg_millis, csr_matrix);
-    }
+	// cuSPARSE HybMV
+    if (!g_quiet) printf("\n\n");
+    printf("Cusparse HybMV, "); fflush(stdout);
+    avg_millis = TestCusparseHybmv(vector_y_in, vector_y_out, params, timing_iterations, cusparse);
+    DisplayPerf(device_giga_bandwidth, avg_millis, csr_matrix);
 
 
     // Cleanup
@@ -767,7 +588,6 @@ template <
     typename ValueT,
     typename OffsetT>
 void RunTests(
-    bool                rcm_relabel,
     ValueT              alpha,
     ValueT              beta,
     const std::string&  mtx_filename,
@@ -828,7 +648,6 @@ void RunTests(
     }
 
     RunTest(
-        rcm_relabel,
         alpha,
         beta,
         coo_matrix,
@@ -855,7 +674,6 @@ int main(int argc, char **argv)
             "[--v] "
             "[--i=<timing iterations>] "
             "[--fp64] "
-            "[--rcm] "
             "[--alpha=<alpha scalar (default: 1.0)>] "
             "[--beta=<beta scalar (default: 0.0)>] "
             "\n\t"
@@ -873,7 +691,6 @@ int main(int argc, char **argv)
     }
 
     bool                fp64;
-    bool                rcm_relabel;
     std::string         mtx_filename;
     int                 grid2d              = -1;
     int                 grid3d              = -1;
@@ -887,7 +704,6 @@ int main(int argc, char **argv)
     g_verbose2 = args.CheckCmdLineFlag("v2");
     g_quiet = args.CheckCmdLineFlag("quiet");
     fp64 = args.CheckCmdLineFlag("fp64");
-    rcm_relabel = args.CheckCmdLineFlag("rcm");
     args.GetCmdLineArgument("i", timing_iterations);
     args.GetCmdLineArgument("mtx", mtx_filename);
     args.GetCmdLineArgument("grid2d", grid2d);
@@ -903,11 +719,11 @@ int main(int argc, char **argv)
     // Run test(s)
     if (fp64)
     {
-        RunTests<double, int>(rcm_relabel, alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
+        RunTests<double, int>(alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
     }
     else
     {
-        RunTests<float, int>(rcm_relabel, alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
+        RunTests<float, int>(alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
     }
 
     CubDebugExit(cudaDeviceSynchronize());
