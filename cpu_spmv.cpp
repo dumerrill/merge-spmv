@@ -650,6 +650,12 @@ void RunTests(
     if (reference_vector_y_out)     delete[] reference_vector_y_out;
     if (vector_y_out)               delete[] vector_y_out;
 */
+
+    if (vector_x)                   mkl_free(vector_x);
+    if (vector_y_in)                mkl_free(vector_y_in);
+    if (reference_vector_y_out)     mkl_free(reference_vector_y_out);
+    if (vector_y_out)               mkl_free(vector_y_out);
+
 }
 
 

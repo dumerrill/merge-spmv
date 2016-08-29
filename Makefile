@@ -38,13 +38,12 @@
 #
 #-------------------------------------------------------------------------------
  
-include ./common.mk 
-
 #-------------------------------------------------------------------------------
 # Commandline Options
 #-------------------------------------------------------------------------------
 
 # [mkl=<0|1>] compile against Intel MKL
+
 ifneq ($(mkl), 0)
 	DEFINES 	+= -DCUB_MKL
 
@@ -57,6 +56,86 @@ else
 	
 endif	
 
+endif
+
+# [sm=<XXX,...>] Compute-capability to compile for, e.g., "sm=200,300,350" (SM20 by default).
+  
+COMMA = ,
+ifdef sm
+	SM_ARCH = $(subst $(COMMA),-,$(sm))
+else 
+    SM_ARCH = 200
+endif
+
+ifeq (520, $(findstring 520, $(SM_ARCH)))
+    SM_TARGETS 	+= -gencode=arch=compute_52,code=\"sm_52,compute_52\" 
+endif
+ifeq (370, $(findstring 370, $(SM_ARCH)))
+    SM_TARGETS 	+= -gencode=arch=compute_37,code=\"sm_37,compute_37\" 
+endif
+ifeq (350, $(findstring 350, $(SM_ARCH)))
+    SM_TARGETS 	+= -gencode=arch=compute_35,code=\"sm_35,compute_35\" 
+endif
+ifeq (300, $(findstring 300, $(SM_ARCH)))
+    SM_TARGETS 	+= -gencode=arch=compute_30,code=\"sm_30,compute_30\"
+endif
+
+
+# [verbose=<0|1>] Verbose toolchain output from nvcc option
+
+ifeq ($(verbose), 1)
+	NVCCFLAGS += -v
+endif
+
+
+
+#-------------------------------------------------------------------------------
+# Compiler and compilation platform
+#-------------------------------------------------------------------------------
+
+CUB_DIR = $(dir $(lastword $(MAKEFILE_LIST)))
+
+NVCC = "$(shell which nvcc)"
+ifdef nvccver
+    NVCC_VERSION = $(nvccver)
+else
+    NVCC_VERSION = $(strip $(shell nvcc --version | grep release | sed 's/.*release //' |  sed 's/,.*//'))
+endif
+
+# detect OS
+OSUPPER = $(shell uname -s 2>/dev/null | tr [:lower:] [:upper:])
+
+# Default flags: verbose kernel properties (regs, smem, cmem, etc.); runtimes for compilation phases 
+NVCCFLAGS += $(SM_DEF) -Xptxas -v -Xcudafe -\# 
+
+ifeq (WIN_NT, $(findstring WIN_NT, $(OSUPPER)))
+    # For MSVC
+    # Disable excess x86 floating point precision that can lead to results being labeled incorrectly
+    NVCCFLAGS += -Xcompiler /fp:strict
+    # Help the compiler/linker work with huge numbers of kernels on Windows
+	NVCCFLAGS += -Xcompiler /bigobj -Xcompiler /Zm500
+	CC = cl
+	NPPI = -lnppi
+	
+	# Multithreaded runtime
+	NVCCFLAGS += -Xcompiler /MT
+	
+ifneq ($(force32), 1)
+	CUDART_CYG = "$(shell dirname $(NVCC))/../lib/Win32/cudart.lib"
+else
+	CUDART_CYG = "$(shell dirname $(NVCC))/../lib/x64/cudart.lib"
+endif
+	CUDART = "$(shell cygpath -w $(CUDART_CYG))"
+else
+    # For g++
+    # Disable excess x86 floating point precision that can lead to results being labeled incorrectly
+    NVCCFLAGS += -Xcompiler -ffloat-store
+    CC = g++
+ifneq ($(force32), 1)
+    CUDART = "$(shell dirname $(NVCC))/../lib/libcudart_static.a"
+else
+    CUDART = "$(shell dirname $(NVCC))/../lib64/libcudart_static.a"
+endif
 endif
 
 
@@ -78,15 +157,15 @@ OSUPPER = $(shell uname -s 2>/dev/null | tr [:lower:] [:upper:])
 # Dependency Lists
 #-------------------------------------------------------------------------------
 
-exp_rwildcard=$(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2) $(filter $(subst *,%,$2),$d))
+rwildcard=$(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2) $(filter $(subst *,%,$2),$d))
 
-EXP_DEPS = 	$(call rwildcard, ./,*.cuh) \
-			$(call rwildcard, ./,*.h) \
-            Makefile
+DEPS = 	$(call rwildcard, $(CUB_DIR),*.cuh) \
+		$(call rwildcard, $(CUB_DIR),*.h) \
+        Makefile
 
-DEPS =				$(CUB_DEPS) \
-					$(EXP_DEPS) \
-
+#-------------------------------------------------------------------------------
+# make clean
+#-------------------------------------------------------------------------------
 
 clean :
 	rm -f gpu_spmv cpu_spmv
