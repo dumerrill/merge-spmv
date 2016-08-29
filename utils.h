@@ -58,7 +58,6 @@
 // Command-line
 //---------------------------------------------------------------------
 
-
 /**
  * Utility for parsing command line arguments
  */
@@ -68,6 +67,10 @@ struct CommandLineArgs
     std::vector<std::string>    keys;
     std::vector<std::string>    values;
     std::vector<std::string>    args;
+    cudaDeviceProp              deviceProp;
+    float                       device_giga_bandwidth;
+    size_t                      device_free_physmem;
+    size_t                      device_total_physmem;
 
     /**
      * Constructor
@@ -77,6 +80,10 @@ struct CommandLineArgs
         values(10)
     {
         using namespace std;
+
+        // Initialize mersenne generator
+        unsigned int mersenne_init[4]=  {0x123, 0x234, 0x345, 0x456};
+        mersenne::init_by_array(mersenne_init, 4);
 
         for (int i = 1; i < argc; i++)
         {
@@ -217,7 +224,82 @@ struct CommandLineArgs
     {
         return (int) keys.size();
     }
+
+#ifdef __NVCC__
+
+    /**
+     * Initialize device
+     */
+    cudaError_t DeviceInit(int dev = -1)
+    {
+        cudaError_t error = cudaSuccess;
+
+        do
+        {
+            int deviceCount;
+            error = CubDebug(cudaGetDeviceCount(&deviceCount));
+            if (error) break;
+
+            if (deviceCount == 0) {
+                fprintf(stderr, "No devices supporting CUDA.\n");
+                exit(1);
+            }
+            if (dev < 0)
+            {
+                GetCmdLineArgument("device", dev);
+            }
+            if ((dev > deviceCount - 1) || (dev < 0))
+            {
+                dev = 0;
+            }
+
+            error = CubDebug(cudaSetDevice(dev));
+            if (error) break;
+
+            CubDebugExit(cudaMemGetInfo(&device_free_physmem, &device_total_physmem));
+
+            int ptx_version;
+            error = CubDebug(cub::PtxVersion(ptx_version));
+            if (error) break;
+
+            error = CubDebug(cudaGetDeviceProperties(&deviceProp, dev));
+            if (error) break;
+
+            if (deviceProp.major < 1) {
+                fprintf(stderr, "Device does not support CUDA.\n");
+                exit(1);
+            }
+
+            device_giga_bandwidth = float(deviceProp.memoryBusWidth) * deviceProp.memoryClockRate * 2 / 8 / 1000 / 1000;
+
+            if (!CheckCmdLineFlag("quiet"))
+            {
+                printf(
+                        "Using device %d: %s (PTX version %d, SM%d, %d SMs, "
+                        "%lld free / %lld total MB physmem, "
+                        "%.3f GB/s @ %d kHz mem clock, ECC %s)\n",
+                    dev,
+                    deviceProp.name,
+                    ptx_version,
+                    deviceProp.major * 100 + deviceProp.minor * 10,
+                    deviceProp.multiProcessorCount,
+                    (unsigned long long) device_free_physmem / 1024 / 1024,
+                    (unsigned long long) device_total_physmem / 1024 / 1024,
+                    device_giga_bandwidth,
+                    deviceProp.memoryClockRate,
+                    (deviceProp.ECCEnabled) ? "on" : "off");
+                fflush(stdout);
+            }
+
+        } while (0);
+
+        return error;
+    }
+
+#endif // __NVCC__
+
 };
+
 
 
 
