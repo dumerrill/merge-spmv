@@ -634,10 +634,17 @@ void RunTests(
 
     // Allocate input and output vectors (Use NUMA force if availabe to get consistent perf results)
     ValueT *vector_x, *vector_y_in, *reference_vector_y_out, *vector_y_out;
+/*
     vector_x                = new ValueT[csr_matrix.num_cols];
     vector_y_in             = new ValueT[csr_matrix.num_rows];
     reference_vector_y_out  = new ValueT[csr_matrix.num_rows];
     vector_y_out            = new ValueT[csr_matrix.num_rows];
+*/
+
+    vector_x                = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_cols, 4096);
+    vector_y_in             = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_rows, 4096);
+    reference_vector_y_out  = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_rows, 4096);
+    vector_y_out            = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_rows, 4096);
 
     for (int col = 0; col < csr_matrix.num_cols; ++col)
         vector_x[col] = 1.0;
@@ -665,10 +672,12 @@ void RunTests(
     DisplayPerf(avg_millis, csr_matrix);
 
     // Cleanup
+/*
     if (vector_x)                   delete[] vector_x;
     if (vector_y_in)                delete[] vector_y_in;
     if (reference_vector_y_out)     delete[] reference_vector_y_out;
     if (vector_y_out)               delete[] vector_y_out;
+*/
 }
 
 
