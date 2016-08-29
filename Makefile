@@ -38,7 +38,7 @@
 #
 #-------------------------------------------------------------------------------
  
-include ../common.mk 
+include ./common.mk 
 
 #-------------------------------------------------------------------------------
 # Commandline Options
@@ -81,20 +81,18 @@ OSUPPER = $(shell uname -s 2>/dev/null | tr [:lower:] [:upper:])
 exp_rwildcard=$(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2) $(filter $(subst *,%,$2),$d))
 
 EXP_DEPS = 	$(call rwildcard, ./,*.cuh) \
-			$(call rwildcard, ./,*.h)
+			$(call rwildcard, ./,*.h) \
+            Makefile
 
 DEPS =				$(CUB_DEPS) \
 					$(EXP_DEPS) \
-					$(CUB_DIR)test/Makefile \
-					$(CUB_DIR)test/test_util.h \
-					$(CUB_DIR)test/mersenne.h \
 
 		
 #-------------------------------------------------------------------------------
 # make gpu_spmv
 #-------------------------------------------------------------------------------
 
-gpu_spmv: bin/gpu_spmv
+gpu_spmv: gpu_spmv
 
 gpu_spmv : gpu_spmv.cu $(DEPS)
 	$(NVCC) $(DEFINES) $(SM_TARGETS) -o gpu_spmv gpu_spmv.cu $(NVCCFLAGS) $(CPU_ARCH) $(INC) $(LIBS) -lcusparse -O3
@@ -104,8 +102,8 @@ gpu_spmv : gpu_spmv.cu $(DEPS)
 # make cpu_spmv
 #-------------------------------------------------------------------------------
 
-cpu_spmv: bin/cpu_spmv
+cpu_spmv: cpu_spmv
 
-cpu_spmv : cpu_spmv.cu $(DEPS)
-	$(OMPCC) -o cpu_spmv cpu_spmv.cu $(OMPCC_FLAGS)
+cpu_spmv : cpu_spmv.cpp $(DEPS)
+	$(OMPCC) $(DEFINES) -o cpu_spmv cpu_spmv.cpp $(OMPCC_FLAGS)
 
