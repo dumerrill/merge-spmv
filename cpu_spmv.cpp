@@ -604,19 +604,23 @@ void RunTests(
             printf("\t%d timing iterations\n", timing_iterations);
     }
 
-    // Allocate input and output vectors (Use NUMA force if availabe to get consistent perf results)
+    // Allocate input and output vectors (if available, use NUMA allocation to force storage on the 
+    // sockets for performance consistency)
     ValueT *vector_x, *vector_y_in, *reference_vector_y_out, *vector_y_out;
-/*
-    vector_x                = new ValueT[csr_matrix.num_cols];
-    vector_y_in             = new ValueT[csr_matrix.num_rows];
-    reference_vector_y_out  = new ValueT[csr_matrix.num_rows];
-    vector_y_out            = new ValueT[csr_matrix.num_rows];
-*/
-
-    vector_x                = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_cols, 4096);
-    vector_y_in             = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_rows, 4096);
-    reference_vector_y_out  = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_rows, 4096);
-    vector_y_out            = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_rows, 4096);
+    if (csr_matrix.IsNumaMalloc())
+    {
+        vector_x                = (ValueT*) numa_alloc_onnode(sizeof(ValueT) * csr_matrix.num_cols, 0);
+        vector_y_in             = (ValueT*) numa_alloc_onnode(sizeof(ValueT) * csr_matrix.num_rows, 0);
+        reference_vector_y_out  = (ValueT*) numa_alloc_onnode(sizeof(ValueT) * csr_matrix.num_rows, 0);
+        vector_y_out            = (ValueT*) numa_alloc_onnode(sizeof(ValueT) * csr_matrix.num_rows, 0);
+    }
+    else
+    {
+        vector_x                = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_cols, 4096);
+        vector_y_in             = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_rows, 4096);
+        reference_vector_y_out  = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_rows, 4096);
+        vector_y_out            = (ValueT*) mkl_malloc(sizeof(ValueT) * csr_matrix.num_rows, 4096);
+    }
 
     for (int col = 0; col < csr_matrix.num_cols; ++col)
         vector_x[col] = 1.0;
@@ -644,17 +648,20 @@ void RunTests(
     DisplayPerf(avg_millis, csr_matrix);
 
     // Cleanup
-/*
-    if (vector_x)                   delete[] vector_x;
-    if (vector_y_in)                delete[] vector_y_in;
-    if (reference_vector_y_out)     delete[] reference_vector_y_out;
-    if (vector_y_out)               delete[] vector_y_out;
-*/
-
-    if (vector_x)                   mkl_free(vector_x);
-    if (vector_y_in)                mkl_free(vector_y_in);
-    if (reference_vector_y_out)     mkl_free(reference_vector_y_out);
-    if (vector_y_out)               mkl_free(vector_y_out);
+    if (csr_matrix.IsNumaMalloc())
+    {
+        if (vector_x)                   numa_free(vector_x, sizeof(ValueT) * csr_matrix.num_cols);
+        if (vector_y_in)                numa_free(vector_y_in, sizeof(ValueT) * csr_matrix.num_rows);
+        if (reference_vector_y_out)     numa_free(reference_vector_y_out, sizeof(ValueT) * csr_matrix.num_rows);
+        if (vector_y_out)               numa_free(vector_y_out, sizeof(ValueT) * csr_matrix.num_rows);
+    }
+    else
+    {
+        if (vector_x)                   mkl_free(vector_x);
+        if (vector_y_in)                mkl_free(vector_y_in);
+        if (reference_vector_y_out)     mkl_free(reference_vector_y_out);
+        if (vector_y_out)               mkl_free(vector_y_out);
+    }
 
 }
 

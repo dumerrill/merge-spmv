@@ -62,9 +62,7 @@ struct GraphStats
     int         num_cols;
     int         num_nonzeros;
 
-    double      diag_dist_mean;         // mean
-    double      diag_dist_std_dev;      // sample std dev
-    double      pearson_r;              // coefficient of variation
+    double      pearson_r;              // coefficient of variation x vs y (how linear the sparsity plot is)
 
     double      row_length_mean;        // mean
     double      row_length_std_dev;     // sample std_dev
@@ -78,9 +76,6 @@ struct GraphStats
                 "\t num_rows: %d\n"
                 "\t num_cols: %d\n"
                 "\t num_nonzeros: %d\n"
-                "\t diag_dist_mean: %.2f\n"
-                "\t diag_dist_std_dev: %.2f\n"
-                "\t pearson_r: %f\n"
                 "\t row_length_mean: %.5f\n"
                 "\t row_length_std_dev: %.5f\n"
                 "\t row_length_variation: %.5f\n"
@@ -88,9 +83,6 @@ struct GraphStats
                     num_rows,
                     num_cols,
                     num_nonzeros,
-                    diag_dist_mean,
-                    diag_dist_std_dev,
-                    pearson_r,
                     row_length_mean,
                     row_length_std_dev,
                     row_length_variation,
@@ -100,9 +92,6 @@ struct GraphStats
                 "%d, "
                 "%d, "
                 "%d, "
-                "%.2f, "
-                "%.2f, "
-                "%f, "
                 "%.5f, "
                 "%.5f, "
                 "%.5f, "
@@ -110,9 +99,6 @@ struct GraphStats
                     num_rows,
                     num_cols,
                     num_nonzeros,
-                    diag_dist_mean,
-                    diag_dist_std_dev,
-                    pearson_r,
                     row_length_mean,
                     row_length_std_dev,
                     row_length_variation,
@@ -664,11 +650,11 @@ struct CsrMatrix
     ValueT*     values;
 
 
-    // Which allocation method to use
+    // Whether to use NUMA malloc to always put storage on the same sockets (for perf repeatability)
     bool IsNumaMalloc()
     {
 #ifdef CUB_MKL
-        return ((numa_available() >= 0) && (numa_num_task_nodes() > 1));
+        return (numa_available() >= 0);
 #else
         return false;
 #endif
@@ -698,7 +684,11 @@ struct CsrMatrix
 
             row_offsets     = (OffsetT*) numa_alloc_onnode(sizeof(OffsetT) * (num_rows + 1), 0);
             column_indices  = (OffsetT*) numa_alloc_onnode(sizeof(OffsetT) * num_nonzeros, 0);
-            values          = (ValueT*) numa_alloc_onnode(sizeof(ValueT) * num_nonzeros, 1);
+
+            if (numa_num_task_nodes() > 1)
+                values          = (ValueT*) numa_alloc_onnode(sizeof(ValueT) * num_nonzeros, 1);    // put on different socket than column_indices
+            else
+                values          = (ValueT*) numa_alloc_onnode(sizeof(ValueT) * num_nonzeros, 0);
         }
         else
         {
@@ -824,9 +814,6 @@ struct CsrMatrix
                 ss_tot                  += delta * (x - mean);
             }
         }
-        stats.diag_dist_mean            = mean;
-        double variance                 = ss_tot / samples;
-        stats.diag_dist_std_dev         = sqrt(variance);
 
         //
         // Compute deming statistics
@@ -908,7 +895,7 @@ struct CsrMatrix
 
         // Sample mean
         stats.row_length_mean       = double(num_nonzeros) / num_rows;
-        variance                    = 0.0;
+        double variance             = 0.0;
         stats.row_length_skewness   = 0.0;
         for (OffsetT row = 0; row < num_rows; ++row)
         {
