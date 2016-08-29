@@ -58,9 +58,7 @@
 #include <iostream>
 #include <limits>
 
-#ifdef CUB_MKL
-    #include <mkl.h>
-#endif
+#include <mkl.h>
 
 #include "sparse_matrix.h"
 #include "utils.h"
@@ -366,8 +364,11 @@ float TestOmpMergeCsrmv(
     ValueT*                         vector_x,
     ValueT*                         reference_vector_y_out,
     ValueT*                         vector_y_out,
-    int                             timing_iterations)
+    int                             timing_iterations,
+    float                           &setup_ms)
 {
+    setup_ms = 0.0;
+
     if (g_omp_threads == -1)
         g_omp_threads = omp_get_num_procs();
     int num_threads = g_omp_threads;
@@ -383,14 +384,15 @@ float TestOmpMergeCsrmv(
         // Check answer
         int compare = CompareResults(reference_vector_y_out, vector_y_out, a.num_rows, true);
         printf("\t%s\n", compare ? "FAIL" : "PASS"); fflush(stdout);
-
-        // Re-populate caches, etc.
-        memset(vector_y_out, -1, sizeof(ValueT) * a.num_rows);
-        OmpMergeCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
     }
+ 
+    // Re-populate caches, etc.
+    OmpMergeCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
+    OmpMergeCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
+    OmpMergeCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
 
     // Timing
-    float elapsed_millis = 0.0;
+    float elapsed_ms = 0.0;
     CpuTimer timer;
     timer.Start();
     for(int it = 0; it < timing_iterations; ++it)
@@ -398,9 +400,9 @@ float TestOmpMergeCsrmv(
         OmpMergeCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
     }
     timer.Stop();
-    elapsed_millis += timer.ElapsedMillis();
+    elapsed_ms += timer.ElapsedMillis();
 
-    return elapsed_millis / timing_iterations;
+    return elapsed_ms / timing_iterations;
 }
 
 
@@ -452,8 +454,11 @@ float TestMklCsrmv(
     ValueT*                         vector_x,
     ValueT*                         reference_vector_y_out,
     ValueT*                         vector_y_out,
-    int                             timing_iterations)
+    int                             timing_iterations,
+    float                           &setup_ms)
 {
+    setup_ms = 0.0;
+
     // Warmup/correctness
     memset(vector_y_out, -1, sizeof(ValueT) * a.num_rows);
     MklCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
@@ -463,13 +468,16 @@ float TestMklCsrmv(
         int compare = CompareResults(reference_vector_y_out, vector_y_out, a.num_rows, true);
         printf("\t%s\n", compare ? "FAIL" : "PASS"); fflush(stdout);
 
-        // Re-populate caches, etc.
-        memset(vector_y_out, -1, sizeof(ValueT) * a.num_rows);
-        MklCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
+//        memset(vector_y_out, -1, sizeof(ValueT) * a.num_rows);
     }
 
+    // Re-populate caches, etc.
+    MklCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
+    MklCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
+    MklCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
+
     // Timing
-    float elapsed_millis = 0.0;
+    float elapsed_ms = 0.0;
     CpuTimer timer;
     timer.Start();
     for(int it = 0; it < timing_iterations; ++it)
@@ -477,10 +485,11 @@ float TestMklCsrmv(
         MklCsrmv(g_omp_threads, a, a.row_offsets + 1, a.column_indices, a.values, vector_x, vector_y_out);
     }
     timer.Stop();
-    elapsed_millis += timer.ElapsedMillis();
+    elapsed_ms += timer.ElapsedMillis();
 
-    return elapsed_millis / timing_iterations;
+    return elapsed_ms / timing_iterations;
 }
+
 
 //---------------------------------------------------------------------
 // Test generation
@@ -491,25 +500,27 @@ float TestMklCsrmv(
  */
 template <typename ValueT, typename OffsetT>
 void DisplayPerf(
-    double                          avg_millis,
+    double                          setup_ms,
+    double                          avg_ms,
     CsrMatrix<ValueT, OffsetT>&     csr_matrix)
 {
     double nz_throughput, effective_bandwidth;
     size_t total_bytes = (csr_matrix.num_nonzeros * (sizeof(ValueT) * 2 + sizeof(OffsetT))) +
         (csr_matrix.num_rows) * (sizeof(OffsetT) + sizeof(ValueT));
 
-    nz_throughput       = double(csr_matrix.num_nonzeros) / avg_millis / 1.0e6;
-    effective_bandwidth = double(total_bytes) / avg_millis / 1.0e6;
+    nz_throughput       = double(csr_matrix.num_nonzeros) / avg_ms / 1.0e6;
+    effective_bandwidth = double(total_bytes) / avg_ms / 1.0e6;
 
     if (!g_quiet)
-        printf("fp%d: %.4f avg ms, %.5f gflops, %.3lf effective GB/s\n",
+        printf("fp%d: %.4f setup ms, %.4f avg ms, %.5f gflops, %.3lf effective GB/s\n",
             int(sizeof(ValueT) * 8),
-            avg_millis,
+            setup_ms,
+            avg_ms,
             2 * nz_throughput,
             effective_bandwidth);
     else
-        printf("%.5f, %.6f, %.3lf, ",
-            avg_millis,
+        printf("%.5f, %.5f, %.6f, %.3lf, ",
+            setup_ms, avg_ms,
             2 * nz_throughput,
             effective_bandwidth);
 
@@ -540,7 +551,6 @@ void RunTests(
     if (!mtx_filename.empty())
     {
         // Parse matrix market file
-        printf("%s, ", mtx_filename.c_str()); fflush(stdout);
         coo_matrix.InitMarket(mtx_filename, 1.0, !g_quiet);
 
         if ((coo_matrix.num_rows == 1) || (coo_matrix.num_cols == 1) || (coo_matrix.num_nonzeros == 1))
@@ -548,6 +558,7 @@ void RunTests(
             if (!g_quiet) printf("Trivial dataset\n");
             exit(0);
         }
+        printf("%s, ", mtx_filename.c_str()); fflush(stdout);
     }
     else if (grid2d > 0)
     {
@@ -599,7 +610,7 @@ void RunTests(
     // Determine # of timing iterations (aim to run 16 billion nonzeros through, total)
     if (timing_iterations == -1)
     {
-        timing_iterations = std::min(50000ull, std::max(100ull, ((16ull << 30) / csr_matrix.num_nonzeros)));
+        timing_iterations = std::min(200000ull, std::max(100ull, ((16ull << 30) / csr_matrix.num_nonzeros)));
         if (!g_quiet)
             printf("\t%d timing iterations\n", timing_iterations);
     }
@@ -631,21 +642,19 @@ void RunTests(
     // Compute reference answer
     SpmvGold(csr_matrix, vector_x, vector_y_in, reference_vector_y_out, alpha, beta);
 
-    float avg_millis;
+    float avg_ms, setup_ms;
 
-#ifdef CUB_MKL
     // MKL SpMV
     if (!g_quiet) printf("\n\n");
     printf("MKL CsrMV, "); fflush(stdout);
-    avg_millis = TestMklCsrmv(csr_matrix, vector_x, reference_vector_y_out, vector_y_out, timing_iterations);
-    DisplayPerf(avg_millis, csr_matrix);
-#endif
+    avg_ms = TestMklCsrmv(csr_matrix, vector_x, reference_vector_y_out, vector_y_out, timing_iterations, setup_ms);
+    DisplayPerf(setup_ms, avg_ms, csr_matrix);
 
     // Merge SpMV
     if (!g_quiet) printf("\n\n");
     printf("Merge CsrMV, "); fflush(stdout);
-    avg_millis = TestOmpMergeCsrmv(csr_matrix, vector_x, reference_vector_y_out, vector_y_out, timing_iterations);
-    DisplayPerf(avg_millis, csr_matrix);
+    avg_ms = TestOmpMergeCsrmv(csr_matrix, vector_x, reference_vector_y_out, vector_y_out, timing_iterations, setup_ms);
+    DisplayPerf(setup_ms, avg_ms, csr_matrix);
 
     // Cleanup
     if (csr_matrix.IsNumaMalloc())

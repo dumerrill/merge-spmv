@@ -1,0 +1,4 @@
+#!/bin/bash
+
+KMP_AFFINITY=granularity=core,scatter
+./_cpu_spmv_driver $@

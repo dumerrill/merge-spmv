@@ -1,0 +1,3 @@
+#!/bin/bash
+
+./_gpu_spmv_driver $@

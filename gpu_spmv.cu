@@ -38,15 +38,15 @@
 
 #include <cusparse.h>
 
-#include "sparse_matrix.h"
-
 // Ensure printing of CUDA runtime errors to console
 #define CUB_STDERR
 
 #include <cub/device/device_spmv.cuh>
 #include <cub/util_allocator.cuh>
 #include <cub/iterator/tex_ref_input_iterator.cuh>
-#include <test/test_util.h>
+
+#include "sparse_matrix.h"
+#include <utils.h>
 
 using namespace cub;
 
@@ -108,6 +108,7 @@ float TestCusparseHybmv(
     float*                          reference_vector_y_out,
     SpmvParams<float, OffsetT>&     params,
     int                             timing_iterations,
+    float                           &setup_ms,
     cusparseHandle_t                cusparse)
 {
     CpuTimer cpu_timer;
@@ -130,8 +131,7 @@ float TestCusparseHybmv(
 
     cudaDeviceSynchronize();
     cpu_timer.Stop();
-    float elapsed_millis = cpu_timer.ElapsedMillis();
-    printf("HYB setup ms, %.5f, ", elapsed_millis);
+    setup_ms = cpu_timer.ElapsedMillis();
 
     // Reset input/output vector y
     CubDebugExit(cudaMemcpy(params.d_vector_y, vector_y_in, sizeof(float) * params.num_rows, cudaMemcpyHostToDevice));
@@ -151,7 +151,7 @@ float TestCusparseHybmv(
     }
 
     // Timing
-    elapsed_millis    = 0.0;
+    float elapsed_ms = 0.0;
     GpuTimer timer;
 
     timer.Start();
@@ -165,13 +165,13 @@ float TestCusparseHybmv(
             params.d_vector_x, &params.beta, params.d_vector_y));
     }
     timer.Stop();
-    elapsed_millis += timer.ElapsedMillis();
+    elapsed_ms += timer.ElapsedMillis();
 
     // Cleanup
     AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyHybMat(hyb_desc));
     AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyMatDescr(mat_desc));
 
-    return elapsed_millis / timing_iterations;
+    return elapsed_ms / timing_iterations;
 }
 
 
@@ -185,6 +185,7 @@ float TestCusparseHybmv(
     double*                         reference_vector_y_out,
     SpmvParams<double, OffsetT>&    params,
     int                             timing_iterations,
+    float                           &setup_ms,
     cusparseHandle_t                cusparse)
 {
     CpuTimer cpu_timer;
@@ -206,8 +207,7 @@ float TestCusparseHybmv(
 
     cudaDeviceSynchronize();
     cpu_timer.Stop();
-    float elapsed_millis = cpu_timer.ElapsedMillis();
-    printf("HYB setup ms, %.5f, ", elapsed_millis);
+    setup_ms = cpu_timer.ElapsedMillis();
 
     // Reset input/output vector y
     CubDebugExit(cudaMemcpy(params.d_vector_y, vector_y_in, sizeof(float) * params.num_rows, cudaMemcpyHostToDevice));
@@ -227,7 +227,7 @@ float TestCusparseHybmv(
     }
 
     // Timing
-    elapsed_millis    = 0.0;
+    float elapsed_ms = 0.0;
     GpuTimer timer;
 
     timer.Start();
@@ -241,13 +241,13 @@ float TestCusparseHybmv(
             params.d_vector_x, &params.beta, params.d_vector_y));
     }
     timer.Stop();
-    elapsed_millis += timer.ElapsedMillis();
+    elapsed_ms += timer.ElapsedMillis();
 
     // Cleanup
     AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyHybMat(hyb_desc));
     AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyMatDescr(mat_desc));
 
-    return elapsed_millis / timing_iterations;
+    return elapsed_ms / timing_iterations;
 }
 
 
@@ -266,8 +266,11 @@ float TestCusparseCsrmv(
     float*                          reference_vector_y_out,
     SpmvParams<float, OffsetT>&     params,
     int                             timing_iterations,
+    float                           &setup_ms,
     cusparseHandle_t                cusparse)
 {
+    setup_ms = 0.0;
+
     cusparseMatDescr_t desc;
     AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseCreateMatDescr(&desc));
 
@@ -288,7 +291,7 @@ float TestCusparseCsrmv(
     }
 
     // Timing
-    float elapsed_millis    = 0.0;
+    float elapsed_ms    = 0.0;
     GpuTimer timer;
 
     timer.Start();
@@ -301,10 +304,10 @@ float TestCusparseCsrmv(
             params.d_vector_x, &params.beta, params.d_vector_y));
     }
     timer.Stop();
-    elapsed_millis += timer.ElapsedMillis();
+    elapsed_ms += timer.ElapsedMillis();
 
     AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyMatDescr(desc));
-    return elapsed_millis / timing_iterations;
+    return elapsed_ms / timing_iterations;
 }
 
 
@@ -318,6 +321,7 @@ float TestCusparseCsrmv(
     double*                         reference_vector_y_out,
     SpmvParams<double, OffsetT>&    params,
     int                             timing_iterations,
+    float                           &setup_ms,
     cusparseHandle_t                cusparse)
 {
     cusparseMatDescr_t desc;
@@ -340,7 +344,7 @@ float TestCusparseCsrmv(
     }
 
     // Timing
-    float elapsed_millis = 0.0;
+    float elapsed_ms = 0.0;
     GpuTimer timer;
     timer.Start();
     for(int it = 0; it < timing_iterations; ++it)
@@ -353,10 +357,10 @@ float TestCusparseCsrmv(
 
     }
     timer.Stop();
-    elapsed_millis += timer.ElapsedMillis();
+    elapsed_ms += timer.ElapsedMillis();
 
     AssertEquals(CUSPARSE_STATUS_SUCCESS, cusparseDestroyMatDescr(desc));
-    return elapsed_millis / timing_iterations;
+    return elapsed_ms / timing_iterations;
 }
 
 //---------------------------------------------------------------------
@@ -373,8 +377,11 @@ float TestGpuMergeCsrmv(
     ValueT*                         vector_y_in,
     ValueT*                         reference_vector_y_out,
     SpmvParams<ValueT, OffsetT>&    params,
-    int                             timing_iterations)
+    int                             timing_iterations,
+    float                           &setup_ms)
 {
+    setup_ms = 0.0;
+
     // Allocate temporary storage
     size_t temp_storage_bytes = 0;
     void *d_temp_storage = NULL;
@@ -409,7 +416,7 @@ float TestGpuMergeCsrmv(
 
     // Timing
     GpuTimer timer;
-    float elapsed_millis = 0.0;
+    float elapsed_ms = 0.0;
 
     timer.Start();
     for(int it = 0; it < timing_iterations; ++it)
@@ -422,9 +429,9 @@ float TestGpuMergeCsrmv(
             (cudaStream_t) 0, false));
     }
     timer.Stop();
-    elapsed_millis += timer.ElapsedMillis();
+    elapsed_ms += timer.ElapsedMillis();
 
-    return elapsed_millis / timing_iterations;
+    return elapsed_ms / timing_iterations;
 }
 
 //---------------------------------------------------------------------
@@ -437,29 +444,31 @@ float TestGpuMergeCsrmv(
 template <typename ValueT, typename OffsetT>
 void DisplayPerf(
     float                           device_giga_bandwidth,
-    double                          avg_millis,
+    double                          setup_ms,
+    double                          avg_ms,
     CsrMatrix<ValueT, OffsetT>&     csr_matrix)
 {
     double nz_throughput, effective_bandwidth;
     size_t total_bytes = (csr_matrix.num_nonzeros * (sizeof(ValueT) * 2 + sizeof(OffsetT))) +
         (csr_matrix.num_rows) * (sizeof(OffsetT) + sizeof(ValueT));
 
-    nz_throughput       = double(csr_matrix.num_nonzeros) / avg_millis / 1.0e6;
-    effective_bandwidth = double(total_bytes) / avg_millis / 1.0e6;
+    nz_throughput       = double(csr_matrix.num_nonzeros) / avg_ms / 1.0e6;
+    effective_bandwidth = double(total_bytes) / avg_ms / 1.0e6;
 
     if (!g_quiet)
-        printf("fp%d: %.4f avg ms, %.5f gflops, %.3lf effective GB/s (%.2f%% peak)\n",
+        printf("fp%d: %.4f setup ms, %.4f avg ms, %.5f gflops, %.3lf effective GB/s (%.2f%% peak)\n",
             sizeof(ValueT) * 8,
-            avg_millis,
+            setup_ms,
+            avg_ms,
             2 * nz_throughput,
             effective_bandwidth,
             effective_bandwidth / device_giga_bandwidth * 100);
     else
-        printf("%.5f, %.6f, %.3lf, %.2f%%, ",
-            avg_millis,
+        printf("%.5f, %.5f, %.6f, %.3lf, ",
+            setup_ms,
+            avg_ms,
             2 * nz_throughput,
-            effective_bandwidth,
-            effective_bandwidth / device_giga_bandwidth * 100);
+            effective_bandwidth);
 
     fflush(stdout);
 }
@@ -518,7 +527,7 @@ void RunTest(
     // Compute reference answer
     SpmvGold(csr_matrix, vector_x, vector_y_in, vector_y_out, alpha, beta);
 
-    float avg_millis;
+    float avg_ms, setup_ms;
 
     if (g_quiet) {
         printf("%s, %s, ", args.deviceProp.name, (sizeof(ValueT) > 4) ? "fp64" : "fp32"); fflush(stdout);
@@ -548,9 +557,9 @@ void RunTest(
 
 	// Merge-based
     if (!g_quiet) printf("\n\n");
-    printf("CUB, "); fflush(stdout);
-    avg_millis = TestGpuMergeCsrmv(vector_y_in, vector_y_out, params, timing_iterations);
-    DisplayPerf(device_giga_bandwidth, avg_millis, csr_matrix);
+    printf("Merge-based CsrMV, "); fflush(stdout);
+    avg_ms = TestGpuMergeCsrmv(vector_y_in, vector_y_out, params, timing_iterations, setup_ms);
+    DisplayPerf(device_giga_bandwidth, setup_ms, avg_ms, csr_matrix);
 
     // Initialize cuSparse
     cusparseHandle_t cusparse;
@@ -558,16 +567,15 @@ void RunTest(
 
 	// cuSPARSE CsrMV
     if (!g_quiet) printf("\n\n");
-    printf("Cusparse CsrMV, "); fflush(stdout);
-    avg_millis = TestCusparseCsrmv(vector_y_in, vector_y_out, params, timing_iterations, cusparse);
-    DisplayPerf(device_giga_bandwidth, avg_millis, csr_matrix);
+    printf("cuSPARSE CsrMV, "); fflush(stdout);
+    avg_ms = TestCusparseCsrmv(vector_y_in, vector_y_out, params, timing_iterations, setup_ms, cusparse);
+    DisplayPerf(device_giga_bandwidth, setup_ms, avg_ms, csr_matrix);
 
 	// cuSPARSE HybMV
     if (!g_quiet) printf("\n\n");
-    printf("Cusparse HybMV, "); fflush(stdout);
-    avg_millis = TestCusparseHybmv(vector_y_in, vector_y_out, params, timing_iterations, cusparse);
-    DisplayPerf(device_giga_bandwidth, avg_millis, csr_matrix);
-
+    printf("cuSPARSE HybMV, "); fflush(stdout);
+    avg_ms = TestCusparseHybmv(vector_y_in, vector_y_out, params, timing_iterations, setup_ms, cusparse);
+    DisplayPerf(device_giga_bandwidth, setup_ms, avg_ms, csr_matrix);
 
     // Cleanup
     if (params.d_values)            CubDebugExit(g_allocator.DeviceFree(params.d_values));
@@ -604,7 +612,6 @@ void RunTests(
     if (!mtx_filename.empty())
     {
         // Parse matrix market file
-        printf("%s, ", mtx_filename.c_str()); fflush(stdout);
         coo_matrix.InitMarket(mtx_filename, 1.0, !g_quiet);
 
         if ((coo_matrix.num_rows == 1) || (coo_matrix.num_cols == 1) || (coo_matrix.num_nonzeros == 1))
@@ -612,6 +619,7 @@ void RunTests(
             if (!g_quiet) printf("Trivial dataset\n");
             exit(0);
         }
+        printf("%s, ", mtx_filename.c_str()); fflush(stdout);
     }
     else if (grid2d > 0)
     {
@@ -673,7 +681,7 @@ int main(int argc, char **argv)
             "[--quiet] "
             "[--v] "
             "[--i=<timing iterations>] "
-            "[--fp64] "
+            "[--fp32] "
             "[--alpha=<alpha scalar (default: 1.0)>] "
             "[--beta=<beta scalar (default: 0.0)>] "
             "\n\t"
@@ -690,7 +698,7 @@ int main(int argc, char **argv)
         exit(0);
     }
 
-    bool                fp64;
+    bool                fp32;
     std::string         mtx_filename;
     int                 grid2d              = -1;
     int                 grid3d              = -1;
@@ -703,7 +711,7 @@ int main(int argc, char **argv)
     g_verbose = args.CheckCmdLineFlag("v");
     g_verbose2 = args.CheckCmdLineFlag("v2");
     g_quiet = args.CheckCmdLineFlag("quiet");
-    fp64 = args.CheckCmdLineFlag("fp64");
+    fp32 = args.CheckCmdLineFlag("fp32");
     args.GetCmdLineArgument("i", timing_iterations);
     args.GetCmdLineArgument("mtx", mtx_filename);
     args.GetCmdLineArgument("grid2d", grid2d);
@@ -717,13 +725,13 @@ int main(int argc, char **argv)
     CubDebugExit(args.DeviceInit());
 
     // Run test(s)
-    if (fp64)
+    if (fp32)
     {
-        RunTests<double, int>(alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
+        RunTests<float, int>(alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
     }
     else
     {
-        RunTests<float, int>(alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
+        RunTests<double, int>(alpha, beta, mtx_filename, grid2d, grid3d, wheel, dense, timing_iterations, args);
     }
 
     CubDebugExit(cudaDeviceSynchronize());
