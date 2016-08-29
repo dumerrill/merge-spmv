@@ -13,6 +13,24 @@ Duane Merrill and Michael Garland.  2016.  Merge-based Parallel Sparse Matrix-Ve
 ![](http://wwwimages.adobe.com/content/dam/acom/en/legal/images/badges/Adobe_PDF_file_icon_32x32.png) [merge-based-spmv-sc16-preprint.pdf](https://github.com/dumerrill/merge-spmv/raw/master/merge-based-spmv-sc16-preprint.pdf)
 
 <hr>
+<h3>The Algorithm</h3>
+
+The central idea is to frame the parallel CsrMV decomposition as a logical merger of two lists: 
+A.	The row descriptors (e.g., the CSR row-offsets)
+B.	The natural numbers ℕ (e.g., the indices of the CSR nonzero values).  
+
+Individual processing elements are assigned equal-sized shares of this logical merger, with each processing element perform-ing a two-dimensional search to isolate the corresponding region within each list that would comprise its share.  The regions can then be treated as independent CsrMV subprob-lems and consumed directly from the CSR data structures using the sequential method 
+
+![Merge-based parallel decomposition](https://github.com/dumerrill/merge-spmv/raw/master/merge_decomposition.png)
+
+In general, a merge computation can be viewed as a decision path of length |A|+|B| in which progressively larger elements are consumed from A and B.  Fig. 7 illustrates this as a two-dimensional grid in which the elements of A are arranged along the x-axis and the elements of B are arranged along the y-axis.  The decision path begins in the top-left corner and ends in the bottom-right. When traced sequentially, the merge path moves right when consuming the elements from A and down when consuming from B.  As a conse-quence, the path coordinates describe a complete schedule of element comparison and consumption across both input sequences.  Furthermore, each path coordinate can be linearly indexed by its grid diagonal, where diagonals are enumerated from top-left to bottom-right.  Per convention, the semantics of merge always prefer items from A over those from B when comparing same-valued items. This results in exactly one decision path.
+
+![CsrMV partitioning using the 2D merge path](https://github.com/dumerrill/merge-spmv/raw/master/merge_spmv.png)
+
+To parallelize across p threads, the grid is sliced diagonally into p swaths of equal width, and it is the job of each thread is to establish the route of the decision-path through its swath.  The fundamental insight is that any given path coordinate (i,j) can be found independently using the two-dimensional search procedure presented in Algorithm 3.  More specifically, the two elements Ai and Bj scheduled to be compared at diagonal k can be found via constrained binary search along that diagonal: find the first (i,j) where Ai is greater than all of the items consumed before Bj, given that i+j=k.  Each thread need only search the first diagonal in its swath; the remainder of its path segment can be trivially established via sequential comparisons seeded from that starting coordinate. 
+We can compute CsrMV using the merge-path decomposition by logically merging the row-offsets vector with the sequence of natural numbers ℕ used to index the values and column-indices vectors.  We emphasize that this merger is never physically realized, but rather serves to guide the equitable consumption of the CSR matrix.  By design, each contiguous vertical section of the decision path corresponds to a row of nonzeros in the CSR sparse matrix.  As threads follow the merge-path, they accumulate matrix-vector dot-products when moving downwards.  When moving rightwards, threads then flush these accumulated values to the corresponding row output in y and reset their accumulator. The partial sums from rows that span multiple threads can be aggregated in a subsequent reduce-value-by-key “fix-up” pass.
+
+<hr>
 <h3>Prerequisites</h3>
 
 <h4>CPU-based CsrMV</h4>
