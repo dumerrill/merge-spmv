@@ -12,13 +12,49 @@ Duane Merrill and Michael Garland.  2016.  Merge-based Parallel Sparse Matrix-Ve
 
 ![](http://wwwimages.adobe.com/content/dam/acom/en/legal/images/badges/Adobe_PDF_file_icon_32x32.png) [merge-based-spmv-sc16-preprint.pdf](https://github.com/dumerrill/merge-spmv/raw/master/merge-based-spmv-sc16-preprint.pdf)
 
-<br><hr>
+<hr>
+<h3>Prerequisites</h3>
+
+<h4>CPU-based CsrMV</h4>
+
+ * Intel CPU with AVX or wider vector extensions Intel CPU (two sockets of Xeon CPU E5-2695 v2 @ 2.40GHz as tested)
+ * Intel C++ compiler and Math Kernel Library, both of which are included with Intel Parallel Studio (v2016.0.109 as tested)
+
+<h4>GPU-based CsrMV</h4>
+ * NVIDIA GPU with compute capability at least 3.5 (NVIDIA Tesla K40 as tested)
+ * NVIDIA nvcc CUDA compiler and cuSPARSE library, both of which are included with CUDA Toolkit  (CUDA v7.5 as tested)
+ * GNU GCC (v4.4.7 as tested)
+
+Both CPU and GPU driver programs have been tested on CentOs 6.4 and Ubuntu 12.04/14.04, and are expected to run correctly under other Linux distributions.
+
+<hr>
+<h3>Datasets</h3>
+
+Our test driver programs currently support input files encoded using the [matrix market format](http://math.nist.gov/MatrixMarket/formats.html).  All matrix market datasets used in this evaluation are publicly available from the Florida Sparse Matrix Repository.  Datasets can be downloaded individually from the [UF website](https://www.cise.ufl.edu/research/sparse/matrices/).
+
+Additionally, the merge-spmv project provides users with the script `get_uf_datasets.sh` that will download and unpack the entire corpus used in this evaluation.  For example:
+
+```sh
+[dumerrill@dtlogin merge-spmv]$ ./get_uf_datasets.sh ufl_mtx
+
+[dumerrill@dtlogin merge-spmv]$ ls ufl_mtx/
+08blocks.mtx                         extr1b_Zeros_11.mtx                 nemsemm1_lo.mtx
+1138_bus.mtx                         extr1b_Zeros_12.mtx                 nemsemm1.mtx
+12month1.mtx                         extr1b_Zeros_13.mtx                 nemsemm1_z0.mtx
+...
+extr1b_Zeros_08.mtx                  nemsemm1_b.mtx                      Zewail_pubyear.mtx
+extr1b_Zeros_09.mtx                  nemsemm1_c.mtx                      Zhao1.mtx
+extr1b_Zeros_10.mtx                  nemsemm1_hi.mtx                     Zhao2.mtx
+```
+
+*Warning: at present time this corpus requires 243GB of free storage.*
+
+<hr>
 <h3>Open Source License</h3>
 
 `merge-spmv` is available under the "New BSD" open-source license:
 
 ```
-Copyright (c) 2010-2011, Duane Merrill.  All rights reserved.
 Copyright (c) 2011-2016, NVIDIA CORPORATION.  All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
