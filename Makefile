@@ -153,7 +153,7 @@ DEPS = 	$(call rwildcard, $(CUB_DIR),*.cuh) \
 #-------------------------------------------------------------------------------
 
 clean :
-	rm -f gpu_spmv cpu_spmv
+	rm -f _gpu_spmv_driver _cpu_spmv_driver
 
 		
 #-------------------------------------------------------------------------------
@@ -161,7 +161,7 @@ clean :
 #-------------------------------------------------------------------------------
 
 gpu_spmv : gpu_spmv.cu $(DEPS)
-	$(NVCC) $(DEFINES) $(SM_TARGETS) -o gpu_spmv gpu_spmv.cu $(NVCCFLAGS) $(CPU_ARCH) $(INC) $(LIBS) -lcusparse -O3
+	$(NVCC) $(DEFINES) $(SM_TARGETS) -o _gpu_spmv_driver gpu_spmv.cu $(NVCCFLAGS) $(CPU_ARCH) $(INC) $(LIBS) -lcusparse -O3
 
 	
 #-------------------------------------------------------------------------------
@@ -169,5 +169,5 @@ gpu_spmv : gpu_spmv.cu $(DEPS)
 #-------------------------------------------------------------------------------
 
 cpu_spmv : cpu_spmv.cpp $(DEPS)
-	$(OMPCC) $(DEFINES) -DCUB_MKL -o cpu_spmv cpu_spmv.cpp $(OMPCC_FLAGS)
+	$(OMPCC) $(DEFINES) -DCUB_MKL -o _cpu_spmv_driver cpu_spmv.cpp $(OMPCC_FLAGS)
 
