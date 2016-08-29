@@ -38,15 +38,15 @@
 
 #include <cusparse.h>
 
-#include "sparse_matrix.h"
-
 // Ensure printing of CUDA runtime errors to console
 #define CUB_STDERR
 
 #include <cub/device/device_spmv.cuh>
 #include <cub/util_allocator.cuh>
 #include <cub/iterator/tex_ref_input_iterator.cuh>
-#include <test/test_util.h>
+
+#include "sparse_matrix.h"
+#include <utils.h>
 
 using namespace cub;
 

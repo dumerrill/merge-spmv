@@ -31,7 +31,7 @@
 # Makefile usage
 # 
 # CPU:
-# make cpu_spmv [mkl=<0|1>]
+# make cpu_spmv
 #
 # GPU:
 # make gpu_spmv [sm=<XXX,...>] [verbose=<0|1>] 
@@ -42,21 +42,6 @@
 # Commandline Options
 #-------------------------------------------------------------------------------
 
-# [mkl=<0|1>] compile against Intel MKL
-
-ifneq ($(mkl), 0)
-	DEFINES 	+= -DCUB_MKL
-
-ifeq (WIN_NT, $(findstring WIN_NT, $(OSUPPER)))
-	LIBS 		+=	mkl_intel_lp64.lib mkl_intel_thread.lib  mkl_core.lib libiomp5md.lib
-	NVCCFLAGS 	+= -Xcompiler /openmp
-else
-	LIBS		+= -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -liomp5 -lpthread -lm
-	NVCCFLAGS 	+= -Xcompiler -fopenmp
-	
-endif	
-
-endif
 
 # [sm=<XXX,...>] Compute-capability to compile for, e.g., "sm=200,300,350" (SM20 by default).
   
@@ -64,7 +49,7 @@ COMMA = ,
 ifdef sm
 	SM_ARCH = $(subst $(COMMA),-,$(sm))
 else 
-    SM_ARCH = 200
+    SM_ARCH = 350
 endif
 
 ifeq (520, $(findstring 520, $(SM_ARCH)))
@@ -184,5 +169,5 @@ gpu_spmv : gpu_spmv.cu $(DEPS)
 #-------------------------------------------------------------------------------
 
 cpu_spmv : cpu_spmv.cpp $(DEPS)
-	$(OMPCC) $(DEFINES) -o cpu_spmv cpu_spmv.cpp $(OMPCC_FLAGS)
+	$(OMPCC) $(DEFINES) -DCUB_MKL -o cpu_spmv cpu_spmv.cpp $(OMPCC_FLAGS)
 

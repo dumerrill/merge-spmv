@@ -49,8 +49,224 @@
 #include <iostream>
 #include <limits>
 
-//#include "omp.h"
+#ifdef CUB_MKL
+    #include "omp.h"
+#endif
 
+
+/******************************************************************************
+ * Assertion macros
+ ******************************************************************************/
+
+/**
+ * Assert equals
+ */
+#define AssertEquals(a, b) if ((a) != (b)) { std::cerr << "\n(" << __FILE__ << ": " << __LINE__ << ")\n"; exit(1);}
+
+
+
+//---------------------------------------------------------------------
+// Random number generation
+//---------------------------------------------------------------------
+
+static unsigned long long g_num_rand_samples = 0;
+
+namespace mersenne {
+
+/* Period parameters */
+const unsigned int N          = 624;
+const unsigned int M          = 397;
+const unsigned int MATRIX_A   = 0x9908b0df; /* constant vector a */
+const unsigned int UPPER_MASK = 0x80000000; /* most significant w-r bits */
+const unsigned int LOWER_MASK = 0x7fffffff; /* least significant r bits */
+
+static unsigned int mt[N];  /* the array for the state vector  */
+static int mti = N + 1;     /* mti==N+1 means mt[N] is not initialized */
+
+/* initializes mt[N] with a seed */
+void init_genrand(unsigned int s)
+{
+    mt[0] = s & 0xffffffff;
+    for (mti = 1; mti < N; mti++)
+    {
+        mt[mti] = (1812433253 * (mt[mti - 1] ^ (mt[mti - 1] >> 30)) + mti);
+
+        /* See Knuth TAOCP Vol2. 3rd Ed. P.106 for mtiplier. */
+        /* In the previous versions, MSBs of the seed affect   */
+        /* only MSBs of the array mt[].                        */
+        /* 2002/01/09 modified by Makoto Matsumoto             */
+
+        mt[mti] &= 0xffffffff;
+        /* for >32 bit machines */
+    }
+}
+
+/* initialize by an array with array-length */
+/* init_key is the array for initializing keys */
+/* key_length is its length */
+/* slight change for C++, 2004/2/26 */
+void init_by_array(unsigned int init_key[], int key_length)
+{
+    int i, j, k;
+    init_genrand(19650218);
+    i = 1;
+    j = 0;
+    k = (N > key_length ? N : key_length);
+    for (; k; k--)
+    {
+        mt[i] = (mt[i] ^ ((mt[i - 1] ^ (mt[i - 1] >> 30)) * 1664525))
+            + init_key[j] + j;  /* non linear */
+        mt[i] &= 0xffffffff;    /* for WORDSIZE > 32 machines */
+        i++;
+        j++;
+        if (i >= N)
+        {
+            mt[0] = mt[N - 1];
+            i = 1;
+        }
+        if (j >= key_length) j = 0;
+    }
+    for (k = N - 1; k; k--)
+    {
+        mt[i] = (mt[i] ^ ((mt[i - 1] ^ (mt[i - 1] >> 30)) * 1566083941)) - i; /* non linear */
+        mt[i] &= 0xffffffff; /* for WORDSIZE > 32 machines */
+        i++;
+        if (i >= N)
+        {
+            mt[0] = mt[N - 1];
+            i = 1;
+        }
+    }
+
+    mt[0] = 0x80000000; /* MSB is 1; assuring non-zero initial array */
+}
+
+/* generates a random number on [0,0xffffffff]-interval */
+unsigned int genrand_int32(void)
+{
+    unsigned int y;
+    static unsigned int mag01[2] = { 0x0, MATRIX_A };
+
+    /* mag01[x] = x * MATRIX_A  for x=0,1 */
+
+    if (mti >= N)
+    { /* generate N words at one time */
+        int kk;
+
+        if (mti == N + 1) /* if init_genrand() has not been called, */
+        init_genrand(5489); /* a defat initial seed is used */
+
+        for (kk = 0; kk < N - M; kk++)
+        {
+            y = (mt[kk] & UPPER_MASK) | (mt[kk + 1] & LOWER_MASK);
+            mt[kk] = mt[kk + M] ^ (y >> 1) ^ mag01[y & 0x1];
+        }
+        for (; kk < N - 1; kk++)
+        {
+            y = (mt[kk] & UPPER_MASK) | (mt[kk + 1] & LOWER_MASK);
+            mt[kk] = mt[kk + (M - N)] ^ (y >> 1) ^ mag01[y & 0x1];
+        }
+        y = (mt[N - 1] & UPPER_MASK) | (mt[0] & LOWER_MASK);
+        mt[N - 1] = mt[M - 1] ^ (y >> 1) ^ mag01[y & 0x1];
+
+        mti = 0;
+    }
+
+    y = mt[mti++];
+
+    /* Tempering */
+    y ^= (y >> 11);
+    y ^= (y << 7) & 0x9d2c5680;
+    y ^= (y << 15) & 0xefc60000;
+    y ^= (y >> 18);
+
+    return y;
+}
+
+
+
+} // namespace mersenne
+
+
+/**
+ * Generates random keys.
+ *
+ * We always take the second-order byte from rand() because the higher-order
+ * bits returned by rand() are commonly considered more uniformly distributed
+ * than the lower-order bits.
+ *
+ * We can decrease the entropy level of keys by adopting the technique
+ * of Thearling and Smith in which keys are computed from the bitwise AND of
+ * multiple random samples:
+ *
+ * entropy_reduction    | Effectively-unique bits per key
+ * -----------------------------------------------------
+ * -1                   | 0
+ * 0                    | 32
+ * 1                    | 25.95 (81%)
+ * 2                    | 17.41 (54%)
+ * 3                    | 10.78 (34%)
+ * 4                    | 6.42 (20%)
+ * ...                  | ...
+ *
+ */
+template <typename K>
+void RandomBits(
+    K &key,
+    int entropy_reduction = 0,
+    int begin_bit = 0,
+    int end_bit = sizeof(K) * 8)
+{
+    const int NUM_BYTES = sizeof(K);
+    const int WORD_BYTES = sizeof(unsigned int);
+    const int NUM_WORDS = (NUM_BYTES + WORD_BYTES - 1) / WORD_BYTES;
+
+    unsigned int word_buff[NUM_WORDS];
+
+    if (entropy_reduction == -1)
+    {
+        memset((void *) &key, 0, sizeof(key));
+        return;
+    }
+
+    if (end_bit < 0)
+        end_bit = sizeof(K) * 8;
+
+    // Generate random word_buff
+    for (int j = 0; j < NUM_WORDS; j++)
+    {
+        int current_bit = j * WORD_BYTES * 8;
+
+        unsigned int word = 0xffffffff;
+        word &= 0xffffffff << std::max(0, begin_bit - current_bit);
+        word &= 0xffffffff >> std::max(0, (current_bit + (WORD_BYTES * 8)) - end_bit);
+
+        for (int i = 0; i <= entropy_reduction; i++)
+        {
+            // Grab some of the higher bits from rand (better entropy, supposedly)
+            word &= mersenne::genrand_int32();
+            g_num_rand_samples++;
+        }
+
+        word_buff[j] = word;
+    }
+
+    memcpy(&key, word_buff, sizeof(K));
+}
+
+
+/// Randomly select number between [0:max)
+template <typename T>
+T RandomValue(T max)
+{
+    unsigned int bits;
+    unsigned int max_int = (unsigned int) -1;
+    do {
+        RandomBits(bits);
+    } while (bits == max_int);
+
+    return (T) ((double(bits) / double(max_int)) * double(max));
+}
 
 
 
@@ -67,7 +283,9 @@ struct CommandLineArgs
     std::vector<std::string>    keys;
     std::vector<std::string>    values;
     std::vector<std::string>    args;
+#ifdef __NVCC__
     cudaDeviceProp              deviceProp;
+#endif // __NVCC__
     float                       device_giga_bandwidth;
     size_t                      device_free_physmem;
     size_t                      device_total_physmem;
@@ -302,211 +520,6 @@ struct CommandLineArgs
 
 
 
-
-//---------------------------------------------------------------------
-// Random number generation
-//---------------------------------------------------------------------
-
-static unsigned long long g_num_rand_samples = 0;
-
-namespace mersenne {
-
-/* Period parameters */
-const unsigned int N          = 624;
-const unsigned int M          = 397;
-const unsigned int MATRIX_A   = 0x9908b0df; /* constant vector a */
-const unsigned int UPPER_MASK = 0x80000000; /* most significant w-r bits */
-const unsigned int LOWER_MASK = 0x7fffffff; /* least significant r bits */
-
-static unsigned int mt[N];  /* the array for the state vector  */
-static int mti = N + 1;     /* mti==N+1 means mt[N] is not initialized */
-
-/* initializes mt[N] with a seed */
-void init_genrand(unsigned int s)
-{
-    mt[0] = s & 0xffffffff;
-    for (mti = 1; mti < N; mti++)
-    {
-        mt[mti] = (1812433253 * (mt[mti - 1] ^ (mt[mti - 1] >> 30)) + mti);
-
-        /* See Knuth TAOCP Vol2. 3rd Ed. P.106 for mtiplier. */
-        /* In the previous versions, MSBs of the seed affect   */
-        /* only MSBs of the array mt[].                        */
-        /* 2002/01/09 modified by Makoto Matsumoto             */
-
-        mt[mti] &= 0xffffffff;
-        /* for >32 bit machines */
-    }
-}
-
-/* initialize by an array with array-length */
-/* init_key is the array for initializing keys */
-/* key_length is its length */
-/* slight change for C++, 2004/2/26 */
-void init_by_array(unsigned int init_key[], int key_length)
-{
-    int i, j, k;
-    init_genrand(19650218);
-    i = 1;
-    j = 0;
-    k = (N > key_length ? N : key_length);
-    for (; k; k--)
-    {
-        mt[i] = (mt[i] ^ ((mt[i - 1] ^ (mt[i - 1] >> 30)) * 1664525))
-            + init_key[j] + j;  /* non linear */
-        mt[i] &= 0xffffffff;    /* for WORDSIZE > 32 machines */
-        i++;
-        j++;
-        if (i >= N)
-        {
-            mt[0] = mt[N - 1];
-            i = 1;
-        }
-        if (j >= key_length) j = 0;
-    }
-    for (k = N - 1; k; k--)
-    {
-        mt[i] = (mt[i] ^ ((mt[i - 1] ^ (mt[i - 1] >> 30)) * 1566083941)) - i; /* non linear */
-        mt[i] &= 0xffffffff; /* for WORDSIZE > 32 machines */
-        i++;
-        if (i >= N)
-        {
-            mt[0] = mt[N - 1];
-            i = 1;
-        }
-    }
-
-    mt[0] = 0x80000000; /* MSB is 1; assuring non-zero initial array */
-}
-
-/* generates a random number on [0,0xffffffff]-interval */
-unsigned int genrand_int32(void)
-{
-    unsigned int y;
-    static unsigned int mag01[2] = { 0x0, MATRIX_A };
-
-    /* mag01[x] = x * MATRIX_A  for x=0,1 */
-
-    if (mti >= N)
-    { /* generate N words at one time */
-        int kk;
-
-        if (mti == N + 1) /* if init_genrand() has not been called, */
-        init_genrand(5489); /* a defat initial seed is used */
-
-        for (kk = 0; kk < N - M; kk++)
-        {
-            y = (mt[kk] & UPPER_MASK) | (mt[kk + 1] & LOWER_MASK);
-            mt[kk] = mt[kk + M] ^ (y >> 1) ^ mag01[y & 0x1];
-        }
-        for (; kk < N - 1; kk++)
-        {
-            y = (mt[kk] & UPPER_MASK) | (mt[kk + 1] & LOWER_MASK);
-            mt[kk] = mt[kk + (M - N)] ^ (y >> 1) ^ mag01[y & 0x1];
-        }
-        y = (mt[N - 1] & UPPER_MASK) | (mt[0] & LOWER_MASK);
-        mt[N - 1] = mt[M - 1] ^ (y >> 1) ^ mag01[y & 0x1];
-
-        mti = 0;
-    }
-
-    y = mt[mti++];
-
-    /* Tempering */
-    y ^= (y >> 11);
-    y ^= (y << 7) & 0x9d2c5680;
-    y ^= (y << 15) & 0xefc60000;
-    y ^= (y >> 18);
-
-    return y;
-}
-
-
-
-} // namespace mersenne
-
-
-/**
- * Generates random keys.
- *
- * We always take the second-order byte from rand() because the higher-order
- * bits returned by rand() are commonly considered more uniformly distributed
- * than the lower-order bits.
- *
- * We can decrease the entropy level of keys by adopting the technique
- * of Thearling and Smith in which keys are computed from the bitwise AND of
- * multiple random samples:
- *
- * entropy_reduction    | Effectively-unique bits per key
- * -----------------------------------------------------
- * -1                   | 0
- * 0                    | 32
- * 1                    | 25.95 (81%)
- * 2                    | 17.41 (54%)
- * 3                    | 10.78 (34%)
- * 4                    | 6.42 (20%)
- * ...                  | ...
- *
- */
-template <typename K>
-void RandomBits(
-    K &key,
-    int entropy_reduction = 0,
-    int begin_bit = 0,
-    int end_bit = sizeof(K) * 8)
-{
-    const int NUM_BYTES = sizeof(K);
-    const int WORD_BYTES = sizeof(unsigned int);
-    const int NUM_WORDS = (NUM_BYTES + WORD_BYTES - 1) / WORD_BYTES;
-
-    unsigned int word_buff[NUM_WORDS];
-
-    if (entropy_reduction == -1)
-    {
-        memset((void *) &key, 0, sizeof(key));
-        return;
-    }
-
-    if (end_bit < 0)
-        end_bit = sizeof(K) * 8;
-
-    // Generate random word_buff
-    for (int j = 0; j < NUM_WORDS; j++)
-    {
-        int current_bit = j * WORD_BYTES * 8;
-
-        unsigned int word = 0xffffffff;
-        word &= 0xffffffff << std::max(0, begin_bit - current_bit);
-        word &= 0xffffffff >> std::max(0, (current_bit + (WORD_BYTES * 8)) - end_bit);
-
-        for (int i = 0; i <= entropy_reduction; i++)
-        {
-            // Grab some of the higher bits from rand (better entropy, supposedly)
-            word &= mersenne::genrand_int32();
-            g_num_rand_samples++;
-        }
-
-        word_buff[j] = word;
-    }
-
-    memcpy(&key, word_buff, sizeof(K));
-}
-
-
-/// Randomly select number between [0:max)
-template <typename T>
-T RandomValue(T max)
-{
-    unsigned int bits;
-    unsigned int max_int = (unsigned int) -1;
-    do {
-        RandomBits(bits);
-    } while (bits == max_int);
-
-    return (T) ((double(bits) / double(max_int)) * double(max));
-}
-
-
 //---------------------------------------------------------------------
 // Performance evaluation
 //---------------------------------------------------------------------
@@ -515,7 +528,7 @@ T RandomValue(T max)
 #ifdef CUB_MKL
 
 /**
- * CPU timer
+ * CPU timer (use omp wall timer because rusage accumulates time from all threads)
  */
 struct CpuTimer
 {
@@ -539,7 +552,113 @@ struct CpuTimer
 
 };
 
-#endif
+#else
+
+struct CpuTimer
+{
+#if defined(_WIN32) || defined(_WIN64)
+
+    LARGE_INTEGER ll_freq;
+    LARGE_INTEGER ll_start;
+    LARGE_INTEGER ll_stop;
+
+    CpuTimer()
+    {
+        QueryPerformanceFrequency(&ll_freq);
+    }
+
+    void Start()
+    {
+        QueryPerformanceCounter(&ll_start);
+    }
+
+    void Stop()
+    {
+        QueryPerformanceCounter(&ll_stop);
+    }
+
+    float ElapsedMillis()
+    {
+        double start = double(ll_start.QuadPart) / double(ll_freq.QuadPart);
+        double stop  = double(ll_stop.QuadPart) / double(ll_freq.QuadPart);
+
+        return float((stop - start) * 1000);
+    }
+
+#else   // _WINXXX
+
+    rusage start;
+    rusage stop;
+
+    void Start()
+    {
+        getrusage(RUSAGE_SELF, &start);
+    }
+
+    void Stop()
+    {
+        getrusage(RUSAGE_SELF, &stop);
+    }
+
+    float ElapsedMillis()
+    {
+        float sec = stop.ru_utime.tv_sec - start.ru_utime.tv_sec;
+        float usec = stop.ru_utime.tv_usec - start.ru_utime.tv_usec;
+
+        return (sec * 1000) + (usec / 1000);
+    }
+
+#endif  // _WINXXX
+};
+
+
+
+#endif  // CUB_MKL
+
+#ifdef __NVCC__
+
+
+/**
+ * GPU timer
+ */
+struct GpuTimer
+{
+    cudaEvent_t start;
+    cudaEvent_t stop;
+
+    GpuTimer()
+    {
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+    }
+
+    ~GpuTimer()
+    {
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
+    }
+
+    void Start()
+    {
+        cudaEventRecord(start, 0);
+    }
+
+    void Stop()
+    {
+        cudaEventRecord(stop, 0);
+    }
+
+    float ElapsedMillis()
+    {
+        float elapsed;
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&elapsed, start, stop);
+        return elapsed;
+    }
+};
+
+
+#endif // __NVCC__
 
 
 
@@ -620,6 +739,121 @@ int CompareResults(double* computed, double* reference, OffsetT len, bool verbos
         }
     }
     return 0;
-
 }
+
+
+#ifdef __NVCC__
+
+/**
+ * Print the contents of a device array
+ */
+template <typename T>
+void DisplayDeviceResults(
+    T *d_data,
+    size_t num_items)
+{
+    // Allocate array on host
+    T *h_data = (T*) malloc(num_items * sizeof(T));
+
+    // Copy data back
+    cudaMemcpy(h_data, d_data, sizeof(T) * num_items, cudaMemcpyDeviceToHost);
+
+    DisplayResults(h_data, num_items);
+
+    // Cleanup
+    if (h_data) free(h_data);
+}
+
+/**
+ * Verify the contents of a device array match those
+ * of a host array
+ */
+template <typename S, typename T>
+int CompareDeviceResults(
+    S *h_reference,
+    T *d_data,
+    size_t num_items,
+    bool verbose = true,
+    bool display_data = false)
+{
+    // Allocate array on host
+    T *h_data = (T*) malloc(num_items * sizeof(T));
+
+    // Copy data back
+    cudaMemcpy(h_data, d_data, sizeof(T) * num_items, cudaMemcpyDeviceToHost);
+
+    // Display data
+    if (display_data)
+    {
+        printf("Reference:\n");
+        for (int i = 0; i < int(num_items); i++)
+        {
+            std::cout << h_reference[i] << ", ";
+        }
+        printf("\n\nComputed:\n");
+        for (int i = 0; i < int(num_items); i++)
+        {
+            std::cout << h_data[i] << ", ";
+        }
+        printf("\n\n");
+    }
+
+    // Check
+    int retval = CompareResults(h_data, h_reference, num_items, verbose);
+
+    // Cleanup
+    if (h_data) free(h_data);
+
+    return retval;
+}
+
+
+/**
+ * Verify the contents of a device array match those
+ * of a device array
+ */
+template <typename T>
+int CompareDeviceDeviceResults(
+    T *d_reference,
+    T *d_data,
+    size_t num_items,
+    bool verbose = true,
+    bool display_data = false)
+{
+    // Allocate array on host
+    T *h_reference = (T*) malloc(num_items * sizeof(T));
+    T *h_data = (T*) malloc(num_items * sizeof(T));
+
+    // Copy data back
+    cudaMemcpy(h_reference, d_reference, sizeof(T) * num_items, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_data, d_data, sizeof(T) * num_items, cudaMemcpyDeviceToHost);
+
+    // Display data
+    if (display_data) {
+        printf("Reference:\n");
+        for (int i = 0; i < num_items; i++)
+        {
+            std::cout << CoutCast(h_reference[i]) << ", ";
+        }
+        printf("\n\nComputed:\n");
+        for (int i = 0; i < num_items; i++)
+        {
+            std::cout << CoutCast(h_data[i]) << ", ";
+        }
+        printf("\n\n");
+    }
+
+    // Check
+    int retval = CompareResults(h_data, h_reference, num_items, verbose);
+
+    // Cleanup
+    if (h_reference) free(h_reference);
+    if (h_data) free(h_data);
+
+    return retval;
+}
+
+
+
+#endif // __NVCC__
 
