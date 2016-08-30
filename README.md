@@ -15,7 +15,7 @@ Duane Merrill and Michael Garland.  2016.  Merge-based Parallel Sparse Matrix-Ve
 <hr>
 <h3>The Algorithm</h3>
 
-The central idea is to frame the parallel CsrMV decomposition as a logical merger of the CSR row-offsets and CSR non-zero data.  This equitable multi-partitioning ensures that no single processing element can be overwhelmed by assignment to (a) arbitrarily-long rows or (b) an arbitrarily-large number of zero-length rows.
+The central idea is to frame the parallel CsrMV decomposition as a logical merger of the CSR row-offsets and CSR non-zero data, which is then split equitably among parallel processors/threads.  This effectively paritions the *aggregate* CSR dataset in a manner such that no single processing element can be overwhelmed by assignment to (a) arbitrarily-long rows or (b) an arbitrarily-large number of zero-length rows.
 
 ![Merge-based parallel decomposition](https://github.com/dumerrill/merge-spmv/raw/master/merge_decomposition.png)
 
