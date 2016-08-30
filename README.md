@@ -29,6 +29,8 @@ To parallelize across *p* threads, the grid is sliced diagonally into p swaths o
 
 We can compute CsrMV using the merge-path decomposition by logically merging the row-offsets vector with the sequence of natural numbers ℕ used to index the values and column-indices vectors.  We emphasize that this merger is never physically realized, but rather serves to guide the equitable consumption of the CSR matrix.  By design, each contiguous vertical section of the decision path corresponds to a row of nonzeros in the CSR sparse matrix.  As threads follow the merge-path, they accumulate matrix-vector dot-products when moving downwards.  When moving rightwards, threads then flush these accumulated values to the corresponding row output in y and reset their accumulator. The partial sums from rows that span multiple threads can be aggregated in a subsequent reduce-value-by-key “fix-up” pass.
 
+For more details, see our paper above.
+
 <hr>
 <h3>Prerequisites</h3>
 
